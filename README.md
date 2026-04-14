@@ -1,19 +1,3 @@
----
-license: mit
-datasets:
-- Salesforce/wikitext
-language:
-- en
-metrics:
-- accuracy
-base_model:
-- openai-community/gpt2
-pipeline_tag: text-generation
-library_name: transformers
----
-
-
-
 # BitNet-GPT2-125M: 1.58-bit Quantization-Aware Training
 
 This repository demonstrates the end-to-end conversion, Quantization-Aware Training (QAT), and inference of a 1.58-bit Large Language Model built entirely from scratch. By performing "Model Surgery" on a standard Hugging Face GPT-2 (125M), this project replaces standard 16-bit floating-point linear layers with custom **Ternary (-1, 0, 1) BitLinear layers**, inspired by Microsoft's *The Era of 1-bit LLMs* research.

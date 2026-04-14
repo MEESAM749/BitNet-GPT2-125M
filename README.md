@@ -84,7 +84,8 @@ During a standard 2-hour training run on an NVIDIA T4, the model successfully de
 > *Prompt:* The future of artificial intelligence is
 > *Output:* `the most powerful and influential than any of the most important computer, and the computer is the best known for its...`
 
-## NOTE: THIS WAS AN EXPERIMENT FOR LEARNING PURPOSES, NOTHING MORE. 125M PARAMS ARE FAR TOO FEW. I WOULD'VE USED A LARGER MODEL BUT I DIDN'T HAVE ENOUGH HW RESOURCES. 
+## NOTE: 
+# THIS WAS AN EXPERIMENT FOR LEARNING PURPOSES, NOTHING MORE. 125M PARAMS ARE FAR TOO FEW. I WOULD'VE USED A LARGER MODEL BUT I DIDN'T HAVE ENOUGH HW RESOURCES TO TRAIN A LARGER MODEL.
 
 ## Future Work
 

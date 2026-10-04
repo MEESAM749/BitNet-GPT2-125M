@@ -1,6 +1,6 @@
 # BitNet-GPT2-125M: 1.58-bit Quantization-Aware Training
 
-This repository demonstrates the end-to-end conversion, Quantization-Aware Training (QAT), and inference of a 1.58-bit Large Language Model built entirely from scratch. By performing "Model Surgery" on a standard Hugging Face GPT-2 (125M), this project replaces standard 16-bit floating-point linear layers with custom **Ternary (-1, 0, 1) BitLinear layers**, inspired by Microsoft's *The Era of 1-bit LLMs* research.
+This repository demonstrates the end-to-end conversion, Quantization-Aware Training (QAT), and inference of a 1.58-bit Large Language Model built entirely from scratch. This project replaces standard 16-bit floating-point linear layers with custom **Ternary (-1, 0, 1) BitLinear layers**, inspired by Microsoft's *The Era of 1-bit LLMs* research.
 
 ## The Core Concept: 1.58-bit Inference
 
@@ -12,7 +12,7 @@ This transition mathematically simplifies inference from complex matrix multipli
 
 * **Custom `BitLinear` PyTorch Module:** A drop-in replacement for `nn.Linear` featuring dynamic AbsMean scaling.
 * **Straight-Through Estimator (STE):** A custom `torch.autograd.Function` that allows backpropagation to bypass the non-differentiable step function of the ternary quantizer, updating hidden "shadow" FP16 weights during training.
-* **Live Architecture Surgery:** A dynamic pipeline that walks the model graph, replacing standard `Conv1D` / `Linear` layers with `BitLinear` modules while copying initial shadow weights.
+* **Live Architecture Evolution:** A dynamic pipeline that walks the model graph, replacing standard `Conv1D` / `Linear` layers with `BitLinear` modules while copying initial shadow weights.
 * **Memory-Safe QAT Loop:** Implements micro-batching and gradient accumulation to perform full Quantization-Aware Training within the 15GB VRAM constraints of standard consumer GPUs (e.g., NVIDIA T4).
 
 ## Architecture: The `BitNetSTE`
@@ -43,7 +43,7 @@ class BitNetSTE(torch.autograd.Function):
 pip install torch transformers datasets
 ```
 
-### 1. Perform Model Surgery
+### 1. Model Setup
 
 Load a standard GPT-2 model and inject the `BitLinear` layers:
 
@@ -57,7 +57,7 @@ perform_surgery(model)
 
 ### 2. Fine-Tuning
 
-Because the initial transition to ternary weights causes massive precision loss (acting like a lobotomy to the pre-trained model), it must undergo Quantization-Aware Training to recover its reasoning capabilities.
+Because the initial transition to ternary weights causes massive precision loss , it must undergo Quantization-Aware Training to recover its reasoning capabilities.
 
 Run the training loop on the WikiText dataset:
 
@@ -74,7 +74,7 @@ During a standard 2-hour training run on an NVIDIA T4, the model successfully de
 * **Epoch 1 Average Loss:** `8.6477` (Random/Confused)
 * **Epoch 3 Average Loss:** `5.9542` (Grammar recovery)
 
-**Sample Generation (Post-Surgery, Pre-Training):**
+**Sample Generation (Pre-Training):**
 
 > *Prompt:* The future of artificial intelligence is
 > *Output:* `zxq wlp rtb the a of to in...`
@@ -90,7 +90,7 @@ During a standard 2-hour training run on an NVIDIA T4, the model successfully de
 ## Future Work
 
 * Integrate **Sub-Layer Normalization (SubLN)** to stabilize activation variance in deeper models.
-* Scale up the architecture surgery to a 32B parameter Distilled Teacher/Student framework.
+* Scale up the architecture to a 32B parameter Distilled Teacher/Student framework.
 * Implement custom CUDA/C++ kernels (`bitnet.cpp` integration) for actual on-device CPU inference speedups.
 
 *Disclaimer: This is an educational project built to demonstrate the foundational concepts of Quantization-Aware Training and custom PyTorch autograd functions.*

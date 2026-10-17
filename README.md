@@ -1,35 +1,205 @@
 # BitNet-GPT2-125M
 
-An experimental GPT-2 (125M) project that replaces GPT-2's MLP projection layers with custom ternary `BitLinear` layers and uses a straight-through estimator (STE) so the underlying floating-point weights can still be trained.
+An educational GPT-2 (125M) quantization-aware training experiment that replaces GPT-2's MLP projection layers with custom ternary `BitLinear` layers.
 
-> **Important:** this repository demonstrates ternary quantization-aware behavior in PyTorch. It does **not** currently store the model in a packed 1.58-bit format or use custom 1.58-bit inference kernels. The saved checkpoint is still a floating-point Safetensors file.
+The trainable parameters remain floating-point tensors, but every `BitLinear` forward pass quantizes its weight tensor to `{-1, 0, 1}`. A straight-through estimator (STE) lets gradients update the underlying floating-point weights during training.
 
-## What is in this repository?
+> **Important:** this repository demonstrates ternary QAT. It does **not** currently pack weights into a physical 1.58-bit representation or provide optimized ternary CUDA/CPU kernels. The checkpoint remains a normal floating-point PyTorch/Safetensors checkpoint.
 
-| File | Purpose | Current status |
-| --- | --- | --- |
-| `run.py` | Defines `BitNetSTE`, `BitLinear`, performs GPT-2 model surgery, loads a local trained checkpoint, and provides an interactive text-generation loop. | **Usable** once the checkpoint/config/tokenizer files are downloaded. |
-| `model_converter.py` | Contains the same ternary layer/surgery logic plus code for downloading/loading the trained checkpoint. | **Experimental / not standalone**: the file references `model` without creating it. |
-| `trainer.py` | WikiText-2 training loop with a 2-hour wall-clock limit, checkpointing, and loss logging. | **Experimental / not standalone**: it expects an existing `model` and a `showcase_evolution()` function. |
-| `README.md` | Project documentation. | You are here. |
+## Repository layout
 
-The trained checkpoint is hosted separately on Hugging Face:
+| File | Purpose |
+| --- | --- |
+| `model_converter.py` | Defines `BitNetSTE` and `BitLinear`, converts GPT-2 MLP projections, saves converted models, and loads trained checkpoints. |
+| `trainer.py` | Complete WikiText-2 QAT training script with periodic generation and checkpoint saving. |
+| `run.py` | Interactive inference using either the hosted trained checkpoint or a local checkpoint directory. |
+| `requirements.txt` | Project dependencies. |
+
+The original trained checkpoint is hosted at:
 
 `123aloo123/BitNet-GPT2-125M-Ternary`
 
 ---
 
-## How the ternary layer works
+## Installation
 
-The repository replaces GPT-2's MLP `c_fc` and `c_proj` modules with a custom `BitLinear` layer.
+```bash
+git clone https://github.com/MEESAM749/BitNet-GPT2-125M.git
+cd BitNet-GPT2-125M
 
-During each forward pass, the weight tensor is quantized to:
-
-```text
-{-1, 0, 1}
+python -m venv .venv
 ```
 
-using AbsMean scaling:
+Activate the environment, then install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+# Run the trained model
+
+The simplest way to use the project is:
+
+```bash
+python run.py
+```
+
+By default, `run.py` loads:
+
+```text
+123aloo123/BitNet-GPT2-125M-Ternary
+```
+
+The Hugging Face config, tokenizer, and checkpoint are downloaded automatically when needed.
+
+Example:
+
+```text
+Model loaded on cuda. Type 'quit' or 'exit' to stop.
+
+User Prompt: The future of artificial intelligence is
+
+BitNet: ...
+```
+
+You can also load a local checkpoint:
+
+```bash
+python run.py --model ./bitnet_final_2hr
+```
+
+Useful options:
+
+```bash
+python run.py \
+    --model ./bitnet_final_2hr \
+    --max-new-tokens 80 \
+    --temperature 0.8
+```
+
+---
+
+# Train the model
+
+`trainer.py` is now a complete training entry point. It:
+
+1. loads pretrained GPT-2;
+2. replaces GPT-2 MLP `c_fc` and `c_proj` projections with `BitLinear`;
+3. preserves the pretrained projection weights and biases;
+4. loads WikiText-2;
+5. performs ternary quantization-aware training;
+6. periodically generates a qualitative sample;
+7. saves periodic checkpoints;
+8. saves a final model that can be loaded by `run.py`.
+
+To run the original two-hour style experiment:
+
+```bash
+python trainer.py
+```
+
+Default configuration:
+
+```text
+Base model:             gpt2
+Dataset:                wikitext / wikitext-2-raw-v1
+Duration:               2 hours
+Batch size:             4
+Sequence length:        128
+Learning rate:          5e-5
+Showcase interval:      15 minutes
+Checkpoint interval:    30 minutes
+Final output:           ./bitnet_final_2hr
+```
+
+Example shorter run:
+
+```bash
+python trainer.py \
+    --duration-hours 0.25 \
+    --batch-size 4 \
+    --output-dir ./bitnet_test_run
+```
+
+For a lower-memory run, use gradient accumulation:
+
+```bash
+python trainer.py \
+    --batch-size 1 \
+    --gradient-accumulation-steps 4
+```
+
+See all options with:
+
+```bash
+python trainer.py --help
+```
+
+### Padding is excluded from the training loss
+
+GPT-2 does not define a pad token by default, so the script uses EOS as the tokenizer pad token. Padded positions are changed to `-100` in the labels so they are ignored by the language-model loss instead of being learned as repeated EOS tokens.
+
+---
+
+# Convert ordinary GPT-2 without training
+
+To create a QAT-ready ternary GPT-2 checkpoint without starting training:
+
+```bash
+python model_converter.py \
+    --base-model gpt2 \
+    --output-dir ./bitnet_gpt2_init
+```
+
+This converts the GPT-2 MLP projections to `BitLinear`, copies the pretrained weights and biases, and saves the result.
+
+It does **not** perform QAT by itself.
+
+---
+
+# Use the architecture from Python
+
+## Convert pretrained GPT-2
+
+```python
+from model_converter import convert_pretrained_model
+
+model = convert_pretrained_model("gpt2")
+```
+
+Or convert an existing compatible model in place:
+
+```python
+from transformers import AutoModelForCausalLM
+from model_converter import perform_surgery
+
+model = AutoModelForCausalLM.from_pretrained("gpt2")
+perform_surgery(model)
+```
+
+## Load a trained BitNet checkpoint
+
+```python
+from model_converter import load_bitnet_model
+
+model, tokenizer, device = load_bitnet_model(
+    "123aloo123/BitNet-GPT2-125M-Ternary"
+)
+```
+
+A local path works too:
+
+```python
+model, tokenizer, device = load_bitnet_model("./bitnet_final_2hr")
+```
+
+---
+
+# How the ternary layer works
+
+The forward pass performs AbsMean ternarization:
 
 ```python
 gamma = W.abs().mean()
@@ -40,315 +210,104 @@ W_quant = torch.clamp(
 )
 ```
 
+so the effective forward-pass weight values are:
+
+```text
+-1, 0, 1
+```
+
 The backward pass uses a straight-through estimator:
 
 ```python
 return grad_output
 ```
 
-so gradients update the underlying floating-point weights even though the forward pass uses ternary weights.
+This bypasses the non-differentiable rounding operation during backpropagation and lets the optimizer update the underlying floating-point shadow weights.
 
----
-
-# Quick start: run the trained model
-
-This is the most complete path currently provided by the repository.
-
-## 1. Clone the repository
-
-```bash
-git clone https://github.com/MEESAM749/BitNet-GPT2-125M.git
-cd BitNet-GPT2-125M
-```
-
-## 2. Create a Python environment
-
-A virtual environment is recommended.
-
-```bash
-python -m venv .venv
-```
-
-Activate it using the command appropriate for your operating system, then install the dependencies:
-
-```bash
-pip install torch transformers datasets huggingface_hub safetensors
-```
-
-## 3. Download the trained checkpoint files
-
-The GitHub repository contains the source code but not the model checkpoint, tokenizer, or GPT-2 config required by `run.py`.
-
-Download the required files from:
-
-`123aloo123/BitNet-GPT2-125M-Ternary`
-
-with:
-
-```bash
-python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='123aloo123/BitNet-GPT2-125M-Ternary', local_dir='.', allow_patterns=['config.json','generation_config.json','model.safetensors','tokenizer.json','tokenizer_config.json'])"
-```
-
-After downloading, the repository directory should contain at least:
-
-```text
-BitNet-GPT2-125M/
-├── README.md
-├── model_converter.py
-├── run.py
-├── trainer.py
-├── config.json
-├── generation_config.json
-├── model.safetensors
-├── tokenizer.json
-└── tokenizer_config.json
-```
-
-## 4. Start the interactive generator
-
-```bash
-python run.py
-```
-
-`run.py` will:
-
-1. load the tokenizer and GPT-2 config from the current directory;
-2. construct a fresh GPT-2 model;
-3. replace each GPT-2 MLP `c_fc` and `c_proj` layer with `BitLinear`;
-4. load the trained weights from `model.safetensors`;
-5. move the model to CUDA when available, otherwise CPU;
-6. start an interactive prompt loop.
-
-Example:
-
-```text
-Model loaded successfully! Type 'quit' to exit.
-
-User Prompt: The future of artificial intelligence is
-
-BitNet: ...
-```
-
-Type `quit` or `exit` to stop the program.
-
----
-
-# Use the model from your own Python code
-
-Once the Hugging Face checkpoint files have been downloaded into the repository directory, you can reuse the loader from `run.py`:
-
-```python
-import torch
-from run import load_local_model
-
-model, tokenizer, device = load_local_model(".")
-
-prompt = "The future of artificial intelligence is"
-
-inputs = tokenizer(prompt, return_tensors="pt").to(device)
-
-with torch.no_grad():
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=50,
-        do_sample=True,
-        temperature=0.7,
-        pad_token_id=tokenizer.eos_token_id,
-    )
-
-print(tokenizer.decode(outputs[0], skip_special_tokens=True))
-```
-
----
-
-# Perform model surgery on normal GPT-2
-
-If you only want to experiment with the ternary architecture and do **not** need the trained checkpoint, use `perform_surgery()` from `run.py`:
-
-```python
-from transformers import AutoModelForCausalLM
-from run import perform_surgery
-
-model = AutoModelForCausalLM.from_pretrained("gpt2")
-
-perform_surgery(model)
-
-print(model)
-```
-
-This replaces GPT-2's MLP projection layers with `BitLinear` layers while copying the original GPT-2 weights into the replacement layers.
-
-This alone does **not** load the trained ternary checkpoint. It only changes the architecture.
-
----
-
-# Training
-
-`trainer.py` contains the training loop used for the experiment, but in its current repository state it is **not a standalone training command**.
-
-Running:
-
-```bash
-python trainer.py
-```
-
-directly will not work because the script expects objects that are not created inside `trainer.py`:
-
-- a `model` variable;
-- a `showcase_evolution(step, elapsed_minutes)` function.
-
-The training loop itself currently does the following:
-
-- uses `wikitext-2-raw-v1`;
-- filters out very short text entries;
-- uses `AdamW` with a learning rate of `5e-5`;
-- uses a batch size of `4`;
-- tokenizes to a maximum length of `128`;
-- trains for a maximum wall-clock duration of two hours;
-- attempts a text-generation showcase every 15 minutes;
-- saves a checkpoint every 30 minutes to `./bitnet_checkpoints/`;
-- saves the final model to `./bitnet_final_2hr/`.
-
-If you want to train the model again, the intended flow is:
-
-```text
-Load GPT-2
-   ↓
-Perform BitLinear surgery
-   ↓
-Place the resulting model on the selected device
-   ↓
-Run the WikiText QAT loop
-   ↓
-Save the trained BitLinear checkpoint
-```
-
-The current `trainer.py` should therefore be treated as experimental training-loop code that still needs to be connected to model creation and the showcase function before it becomes a clean CLI training script.
-
----
-
-# About `model_converter.py`
-
-`model_converter.py` defines:
-
-- `BitNetSTE`;
-- `BitLinear`;
-- `perform_surgery()`.
-
-It also contains code that downloads `model.safetensors` from the Hugging Face checkpoint and attempts to load it.
-
-However, in the current version of the repository, the file attempts to call:
-
-```python
-model.load_state_dict(...)
-```
-
-without first creating `model`.
-
-Because that code executes at module import time, this also means that:
-
-```python
-from model_converter import perform_surgery
-```
-
-is **not currently a safe usage pattern**.
-
-For architecture experiments, import `perform_surgery` from `run.py` instead:
-
-```python
-from run import perform_surgery
-```
-
----
-
-# Why the README does not use `custom_architecture`
-
-Older documentation for this project showed:
-
-```python
-from custom_architecture import perform_surgery
-```
-
-There is no `custom_architecture.py` file in this repository.
-
-The actual implementation of `perform_surgery()` is currently present in:
-
-```text
-run.py
-model_converter.py
-```
-
-Because `model_converter.py` has executable top-level code that currently depends on an undefined `model`, `run.py` is the safer module to import from.
-
----
-
-# Important implementation notes
-
-## This is ternary QAT, not packed 1.58-bit inference
-
-The `BitLinear` layer quantizes its weights to `-1`, `0`, or `1` during the forward pass, but the trainable parameters remain ordinary floating-point PyTorch tensors.
-
-The hosted `model.safetensors` checkpoint is therefore still a floating-point checkpoint, not a physically packed 1.58-bit weight file.
-
-## There is no custom low-bit inference kernel
-
-The layer ultimately calls:
-
-```python
-torch.nn.functional.linear(...)
-```
-
-with the quantized tensor.
-
-That demonstrates the ternary computation path, but it does not by itself provide the memory footprint or inference-speed benefits of a purpose-built BitNet CUDA/C++/CPU kernel.
-
-## The modification targets GPT-2 MLP projections
-
-`perform_surgery()` replaces modules whose names contain:
+The current implementation converts GPT-2's MLP projections:
 
 ```text
 mlp.c_fc
 mlp.c_proj
 ```
 
-The attention projection layers are not replaced by this implementation.
+The attention projections remain unchanged.
 
 ---
 
-# Project status
+# GPT-2 `Conv1D` and tensor orientation
 
-This project is an educational experiment in:
+Hugging Face GPT-2 implements these projections using its `Conv1D` helper, whose stored weight orientation differs from `torch.nn.Linear`.
 
-- ternary weights;
+```text
+GPT-2 Conv1D:  [in_features, out_features]
+BitLinear:     [out_features, in_features]
+```
+
+`model_converter.py` handles this conversion explicitly when performing model surgery.
+
+The checkpoint loader also checks tensor shapes and transposes target projection weights when the stored layout requires it.
+
+---
+
+# Compatibility with the original trained checkpoint
+
+The original experiment created the replacement MLP projections with `bias=False`. The already-published Hugging Face checkpoint therefore does not contain those MLP bias tensors.
+
+The repaired loader inspects the actual checkpoint tensors:
+
+- legacy checkpoint without MLP biases -> reconstructs the original no-bias architecture;
+- new checkpoint produced by the repaired trainer -> reconstructs the bias-preserving architecture.
+
+This keeps the original trained model loadable while preventing unnecessary information loss in future training runs.
+
+If you intentionally want to reproduce the original no-bias setup:
+
+```bash
+python trainer.py --legacy-drop-mlp-bias
+```
+
+or:
+
+```bash
+python model_converter.py --drop-mlp-bias
+```
+
+---
+
+# What this project is — and is not
+
+This project is useful for learning about:
+
+- ternary weight quantization;
 - quantization-aware training;
 - straight-through estimators;
-- dynamic model surgery in PyTorch;
-- adapting a pretrained GPT-2 architecture to custom linear layers.
+- modifying pretrained Transformer architectures in PyTorch;
+- checkpoint compatibility when custom layers use a different tensor layout.
 
-The 125M-parameter model is small by modern LLM standards and should be treated primarily as a learning/research experiment rather than a production language model.
+However, the trainable weights are still stored as normal floating-point tensors. During inference, `BitLinear` dynamically creates a ternary weight tensor and calls PyTorch's normal linear operation.
 
-## Reported experiment
+So the current implementation does **not** yet provide the memory footprint or inference-speed advantages of a model using packed ternary weights and specialized low-bit kernels.
 
-The original experiment used WikiText-2 and a two-hour training run on an NVIDIA T4. The project reported substantial recovery in language structure after the initial ternary conversion.
-
-These results are experiment-specific and are not a general benchmark of BitNet implementations.
+The 125M-parameter scale is intentionally small and should be treated as an educational/research experiment rather than a competitive modern language model.
 
 ---
 
-# Future work
+# Original experiment
 
-Useful next steps for the repository would be:
+The initial experiment trained the converted GPT-2 125M model on WikiText-2 for approximately two hours on an NVIDIA T4 and periodically generated text to observe recovery after the initial ternary conversion.
 
-1. make `model_converter.py` a clean importable module with no top-level checkpoint-loading side effects;
-2. make `trainer.py` create/load its own model and define the showcase function;
-3. add `requirements.txt`;
-4. add CLI arguments for model paths, prompts, generation settings, training duration, batch size, and learning rate;
-5. save enough custom architecture metadata for simpler Hugging Face loading;
-6. implement packed ternary weights and optimized low-bit kernels if real memory/inference gains are the goal;
-7. add a small smoke test that verifies checkpoint loading and text generation.
+The current code preserves that experiment's basic idea while separating conversion, training, and inference into working reusable components.
 
 ---
 
-## License / disclaimer
+## Future work
 
-This repository is an educational project intended to demonstrate the basic ideas behind ternary quantization-aware training and custom PyTorch autograd behavior.
+Potential extensions include:
+
+- packed ternary checkpoint storage;
+- optimized CUDA/C++/CPU ternary kernels;
+- activation quantization;
+- more complete BitNet architectural changes;
+- evaluation on standard language-model benchmarks;
+- larger models and teacher/student distillation experiments.
